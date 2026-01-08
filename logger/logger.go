@@ -1,0 +1,152 @@
+package logger
+
+import (
+	"context"
+	"os"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+type ctxKey struct{}
+
+var (
+	global *zap.Logger
+	sugar  *zap.SugaredLogger
+)
+
+// Config holds logger configuration
+type Config struct {
+	Level       string `yaml:"level" env:"LOG_LEVEL" env-default:"info"`
+	Development bool   `yaml:"development" env:"LOG_DEV" env-default:"false"`
+	Encoding    string `yaml:"encoding" env:"LOG_ENCODING" env-default:"json"`
+}
+
+// Init initializes the global logger
+func Init(cfg Config) error {
+	level, err := zapcore.ParseLevel(cfg.Level)
+	if err != nil {
+		level = zapcore.InfoLevel
+	}
+
+	var config zap.Config
+	if cfg.Development {
+		config = zap.NewDevelopmentConfig()
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		config = zap.NewProductionConfig()
+	}
+
+	config.Level = zap.NewAtomicLevelAt(level)
+	if cfg.Encoding != "" {
+		config.Encoding = cfg.Encoding
+	}
+
+	logger, err := config.Build(
+		zap.AddCallerSkip(1),
+		zap.AddStacktrace(zapcore.ErrorLevel),
+	)
+	if err != nil {
+		return err
+	}
+
+	global = logger
+	sugar = logger.Sugar()
+
+	return nil
+}
+
+// InitDefault initializes logger with default settings
+func InitDefault() {
+	if global != nil {
+		return
+	}
+
+	var config zap.Config
+	if os.Getenv("GO_ENV") == "development" {
+		config = zap.NewDevelopmentConfig()
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		config = zap.NewProductionConfig()
+	}
+
+	logger, _ := config.Build(zap.AddCallerSkip(1))
+	global = logger
+	sugar = logger.Sugar()
+}
+
+// L returns the global logger
+func L() *zap.Logger {
+	if global == nil {
+		InitDefault()
+	}
+	return global
+}
+
+// S returns the global sugared logger
+func S() *zap.SugaredLogger {
+	if sugar == nil {
+		InitDefault()
+	}
+	return sugar
+}
+
+// WithContext returns a logger from context or global logger
+func WithContext(ctx context.Context) *zap.Logger {
+	if l, ok := ctx.Value(ctxKey{}).(*zap.Logger); ok {
+		return l
+	}
+	return L()
+}
+
+// ToContext adds logger to context
+func ToContext(ctx context.Context, l *zap.Logger) context.Context {
+	return context.WithValue(ctx, ctxKey{}, l)
+}
+
+// WithFields returns a new logger with additional fields
+func WithFields(fields ...zap.Field) *zap.Logger {
+	return L().With(fields...)
+}
+
+// WithRequestID adds request_id field to logger
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	l := WithContext(ctx).With(zap.String("request_id", requestID))
+	return ToContext(ctx, l)
+}
+
+// WithUserID adds user_id field to logger
+func WithUserID(ctx context.Context, userID int64) context.Context {
+	l := WithContext(ctx).With(zap.Int64("user_id", userID))
+	return ToContext(ctx, l)
+}
+
+// Convenience methods
+
+func Debug(msg string, fields ...zap.Field) {
+	L().Debug(msg, fields...)
+}
+
+func Info(msg string, fields ...zap.Field) {
+	L().Info(msg, fields...)
+}
+
+func Warn(msg string, fields ...zap.Field) {
+	L().Warn(msg, fields...)
+}
+
+func Error(msg string, fields ...zap.Field) {
+	L().Error(msg, fields...)
+}
+
+func Fatal(msg string, fields ...zap.Field) {
+	L().Fatal(msg, fields...)
+}
+
+func Sync() error {
+	if global != nil {
+		return global.Sync()
+	}
+	return nil
+}
+
