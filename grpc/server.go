@@ -280,4 +280,3 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 		return handler(ctx, req)
 	}
 }
-
