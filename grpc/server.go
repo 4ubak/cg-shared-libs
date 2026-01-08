@@ -184,3 +184,100 @@ func GetRequestID(ctx context.Context) string {
 	return GetMetadata(ctx, "x-request-id")
 }
 
+// AuthInterceptorConfig holds auth interceptor configuration
+type AuthInterceptorConfig struct {
+	// SkipMethods - list of methods to skip auth (e.g., "/auth.AuthService/SendCode")
+	SkipMethods []string
+}
+
+// JWTValidator interface for JWT validation
+type JWTValidator interface {
+	ValidateAccessToken(token string) (*JWTClaims, error)
+}
+
+// JWTClaims represents JWT claims
+type JWTClaims struct {
+	UserID   int64
+	Phone    string
+	DeviceID string
+}
+
+// AuthContextKey is the key for auth info in context
+type authContextKey struct{}
+
+// AuthInfo holds authenticated user info
+type AuthInfo struct {
+	UserID   int64
+	Phone    string
+	DeviceID string
+}
+
+// GetAuthInfo extracts auth info from context
+func GetAuthInfo(ctx context.Context) (*AuthInfo, bool) {
+	info, ok := ctx.Value(authContextKey{}).(*AuthInfo)
+	return info, ok
+}
+
+// MustGetAuthInfo extracts auth info from context or panics
+func MustGetAuthInfo(ctx context.Context) *AuthInfo {
+	info, ok := GetAuthInfo(ctx)
+	if !ok {
+		panic("auth info not found in context")
+	}
+	return info
+}
+
+// AuthInterceptor creates authentication interceptor
+func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.UnaryServerInterceptor {
+	skipMap := make(map[string]bool)
+	for _, method := range cfg.SkipMethods {
+		skipMap[method] = true
+	}
+
+	return func(
+		ctx context.Context,
+		req any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		// Skip auth for certain methods
+		if skipMap[info.FullMethod] {
+			return handler(ctx, req)
+		}
+
+		// Extract token from metadata
+		token := GetMetadata(ctx, "authorization")
+		if token == "" {
+			return nil, status.Error(codes.Unauthenticated, "missing authorization token")
+		}
+
+		// Remove "Bearer " prefix if present
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+
+		// Validate token
+		claims, err := validator.ValidateAccessToken(token)
+		if err != nil {
+			logger.Warn("invalid token",
+				zap.Error(err),
+				zap.String("method", info.FullMethod),
+			)
+			return nil, status.Error(codes.Unauthenticated, "invalid token")
+		}
+
+		// Add auth info to context
+		authInfo := &AuthInfo{
+			UserID:   claims.UserID,
+			Phone:    claims.Phone,
+			DeviceID: claims.DeviceID,
+		}
+		ctx = context.WithValue(ctx, authContextKey{}, authInfo)
+
+		// Also set user_id in metadata for backward compatibility
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-user-id", fmt.Sprintf("%d", claims.UserID))
+
+		return handler(ctx, req)
+	}
+}
+
