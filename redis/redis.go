@@ -70,7 +70,7 @@ func (c *Client) Close() error {
 }
 
 // SetJSON sets a value as JSON with expiration
-func (c *Client) SetJSON(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+func (c *Client) SetJSON(ctx context.Context, key string, value any, expiration time.Duration) error {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal value: %w", err)
@@ -79,7 +79,7 @@ func (c *Client) SetJSON(ctx context.Context, key string, value interface{}, exp
 }
 
 // GetJSON gets a value and unmarshals from JSON
-func (c *Client) GetJSON(ctx context.Context, key string, dest interface{}) error {
+func (c *Client) GetJSON(ctx context.Context, key string, dest any) error {
 	data, err := c.Get(ctx, key).Bytes()
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func (c *Client) GetJSON(ctx context.Context, key string, dest interface{}) erro
 }
 
 // SetJSONNX sets a value as JSON only if key doesn't exist
-func (c *Client) SetJSONNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error) {
+func (c *Client) SetJSONNX(ctx context.Context, key string, value any, expiration time.Duration) (bool, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return false, fmt.Errorf("marshal value: %w", err)

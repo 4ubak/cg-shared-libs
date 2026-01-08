@@ -89,10 +89,10 @@ func (s *Server) Stop() {
 func recoveryInterceptor() grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
-		req interface{},
+		req any,
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
-	) (resp interface{}, err error) {
+	) (resp any, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				logger.Error("gRPC panic recovered",
@@ -109,10 +109,10 @@ func recoveryInterceptor() grpc.UnaryServerInterceptor {
 func loggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
-		req interface{},
+		req any,
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
-	) (interface{}, error) {
+	) (any, error) {
 		start := time.Now()
 
 		resp, err := handler(ctx, req)
@@ -145,10 +145,10 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 func timeoutInterceptor(timeout time.Duration) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,
-		req interface{},
+		req any,
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
-	) (interface{}, error) {
+	) (any, error) {
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return handler(ctx, req)

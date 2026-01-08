@@ -95,7 +95,7 @@ func (p *Producer) Publish(ctx context.Context, key string, event Event) error {
 }
 
 // PublishJSON publishes a JSON message to Kafka
-func (p *Producer) PublishJSON(ctx context.Context, key string, data interface{}) error {
+func (p *Producer) PublishJSON(ctx context.Context, key string, data any) error {
 	value, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal data: %w", err)

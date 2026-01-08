@@ -46,7 +46,7 @@ func MustLoad[T any](path string) *T {
 	return cfg
 }
 
-func loadFromEnv(cfg interface{}) error {
+func loadFromEnv(cfg any) error {
 	return processStruct(reflect.ValueOf(cfg).Elem())
 }
 

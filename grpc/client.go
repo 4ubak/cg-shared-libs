@@ -92,7 +92,7 @@ func clientLoggingInterceptor() grpc.UnaryClientInterceptor {
 	return func(
 		ctx context.Context,
 		method string,
-		req, reply interface{},
+		req, reply any,
 		cc *grpc.ClientConn,
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
@@ -129,7 +129,7 @@ func retryInterceptor(maxRetries int, waitTime time.Duration) grpc.UnaryClientIn
 	return func(
 		ctx context.Context,
 		method string,
-		req, reply interface{},
+		req, reply any,
 		cc *grpc.ClientConn,
 		invoker grpc.UnaryInvoker,
 		opts ...grpc.CallOption,
