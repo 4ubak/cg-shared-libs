@@ -38,10 +38,30 @@ type Server struct {
 
 // NewServer creates a new gRPC server
 func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
+	// Apply defaults if not set
+	maxRecvMsgSize := cfg.MaxRecvMsgSize
+	if maxRecvMsgSize == 0 {
+		maxRecvMsgSize = 4194304 // 4MB default
+	}
+	maxSendMsgSize := cfg.MaxSendMsgSize
+	if maxSendMsgSize == 0 {
+		maxSendMsgSize = 4194304 // 4MB default
+	}
+
+	logger.Info("gRPC server configuration",
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+		zap.Int("max_recv_msg_size", maxRecvMsgSize),
+		zap.Int("max_send_msg_size", maxSendMsgSize),
+		zap.Int("connection_limit", cfg.ConnectionLimit),
+		zap.Duration("timeout", cfg.Timeout),
+		zap.String("addr", cfg.Addr()),
+	)
+
 	// Add default interceptors
 	defaultOpts := []grpc.ServerOption{
-		grpc.MaxRecvMsgSize(cfg.MaxRecvMsgSize),
-		grpc.MaxSendMsgSize(cfg.MaxSendMsgSize),
+		grpc.MaxRecvMsgSize(maxRecvMsgSize),
+		grpc.MaxSendMsgSize(maxSendMsgSize),
 		grpc.ChainUnaryInterceptor(
 			recoveryInterceptor(),
 			loggingInterceptor(),
@@ -49,8 +69,16 @@ func NewServer(cfg ServerConfig, opts ...grpc.ServerOption) (*Server, error) {
 		),
 	}
 
-	opts = append(defaultOpts, opts...)
-	server := grpc.NewServer(opts...)
+	// User opts come first, then defaults (so defaults can override user opts if needed)
+	// Actually, we want defaults first, then user opts can override
+	allOpts := append(defaultOpts, opts...)
+	server := grpc.NewServer(allOpts...)
+
+	logger.Info("gRPC server created successfully",
+		zap.String("addr", cfg.Addr()),
+		zap.Int("applied_max_recv_msg_size", maxRecvMsgSize),
+		zap.Int("applied_max_send_msg_size", maxSendMsgSize),
+	)
 
 	return &Server{
 		server: server,
@@ -115,6 +143,21 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 	) (any, error) {
 		start := time.Now()
 
+		// Log incoming request details
+		logger.Debug("gRPC request received",
+			zap.String("method", info.FullMethod),
+			zap.Any("request", req),
+		)
+
+		// Extract metadata
+		md, ok := metadata.FromIncomingContext(ctx)
+		if ok {
+			logger.Debug("gRPC request metadata",
+				zap.String("method", info.FullMethod),
+				zap.Any("metadata", md),
+			)
+		}
+
 		resp, err := handler(ctx, req)
 
 		duration := time.Since(start)
@@ -125,15 +168,17 @@ func loggingInterceptor() grpc.UnaryServerInterceptor {
 
 		// Log based on status
 		if code == codes.OK {
-			logger.Debug("gRPC request",
+			logger.Debug("gRPC request completed",
 				zap.String("method", info.FullMethod),
 				zap.Duration("duration", duration),
+				zap.Any("response", resp),
 			)
 		} else {
 			logger.Warn("gRPC request failed",
 				zap.String("method", info.FullMethod),
 				zap.Duration("duration", duration),
 				zap.String("code", code.String()),
+				zap.Any("request", req),
 				zap.Error(err),
 			)
 		}
@@ -159,23 +204,45 @@ func timeoutInterceptor(timeout time.Duration) grpc.UnaryServerInterceptor {
 func GetMetadata(ctx context.Context, key string) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
+		logger.Debug("metadata not found in context",
+			zap.String("key", key),
+		)
 		return ""
 	}
 	values := md.Get(key)
 	if len(values) == 0 {
+		logger.Debug("metadata key not found",
+			zap.String("key", key),
+		)
 		return ""
 	}
-	return values[0]
+	value := values[0]
+	logger.Debug("metadata extracted",
+		zap.String("key", key),
+		zap.String("value", value),
+	)
+	return value
 }
 
 // GetUserID extracts user_id from metadata
 func GetUserID(ctx context.Context) int64 {
 	val := GetMetadata(ctx, "x-user-id")
 	if val == "" {
+		logger.Debug("user_id not found in metadata")
 		return 0
 	}
 	var id int64
-	fmt.Sscanf(val, "%d", &id)
+	n, err := fmt.Sscanf(val, "%d", &id)
+	if err != nil || n != 1 {
+		logger.Warn("failed to parse user_id",
+			zap.String("value", val),
+			zap.Error(err),
+		)
+		return 0
+	}
+	logger.Debug("user_id extracted",
+		zap.Int64("user_id", id),
+	)
 	return id
 }
 
@@ -248,23 +315,44 @@ func AuthInterceptor(validator JWTValidator, cfg AuthInterceptorConfig) grpc.Una
 		// Extract token from metadata
 		token := GetMetadata(ctx, "authorization")
 		if token == "" {
+			logger.Warn("authorization token missing",
+				zap.String("method", info.FullMethod),
+			)
 			return nil, status.Error(codes.Unauthenticated, "missing authorization token")
 		}
 
 		// Remove "Bearer " prefix if present
+		originalToken := token
 		if len(token) > 7 && token[:7] == "Bearer " {
 			token = token[7:]
+			logger.Debug("removed Bearer prefix from token",
+				zap.String("method", info.FullMethod),
+				zap.Int("original_length", len(originalToken)),
+				zap.Int("token_length", len(token)),
+			)
 		}
 
 		// Validate token
+		logger.Debug("validating token",
+			zap.String("method", info.FullMethod),
+			zap.Int("token_length", len(token)),
+		)
 		claims, err := validator.ValidateAccessToken(token)
 		if err != nil {
 			logger.Warn("invalid token",
 				zap.Error(err),
 				zap.String("method", info.FullMethod),
+				zap.Int("token_length", len(token)),
 			)
 			return nil, status.Error(codes.Unauthenticated, "invalid token")
 		}
+
+		logger.Debug("token validated successfully",
+			zap.String("method", info.FullMethod),
+			zap.Int64("user_id", claims.UserID),
+			zap.String("phone", claims.Phone),
+			zap.String("device_id", claims.DeviceID),
+		)
 
 		// Add auth info to context
 		authInfo := &AuthInfo{
