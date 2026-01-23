@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -11,12 +12,61 @@ import (
 	"go.uber.org/zap"
 )
 
+// FlexibleTime is a time.Time wrapper that can unmarshal from multiple formats:
+// - RFC3339 string (e.g., "2006-01-02T15:04:05Z07:00")
+// - Unix timestamp as number (int64 or float64)
+// - Unix timestamp as string
+type FlexibleTime struct {
+	time.Time
+}
+
+// UnmarshalJSON implements json.Unmarshaler for FlexibleTime
+func (ft *FlexibleTime) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first (RFC3339 format)
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		// Try RFC3339 format
+		t, err := time.Parse(time.RFC3339, str)
+		if err == nil {
+			ft.Time = t
+			return nil
+		}
+		// Try RFC3339Nano format
+		t, err = time.Parse(time.RFC3339Nano, str)
+		if err == nil {
+			ft.Time = t
+			return nil
+		}
+		// Try Unix timestamp as string
+		unix, err := strconv.ParseInt(str, 10, 64)
+		if err == nil {
+			ft.Time = time.Unix(unix, 0)
+			return nil
+		}
+		return fmt.Errorf("failed to parse time string: %q", str)
+	}
+
+	// Try to unmarshal as number (Unix timestamp)
+	var num float64
+	if err := json.Unmarshal(data, &num); err == nil {
+		ft.Time = time.Unix(int64(num), 0)
+		return nil
+	}
+
+	return fmt.Errorf("time value is not a string or number: %q", string(data))
+}
+
+// MarshalJSON implements json.Marshaler for FlexibleTime
+func (ft FlexibleTime) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ft.Time.Format(time.RFC3339))
+}
+
 // Config holds Kafka configuration
 type Config struct {
 	Brokers       []string      `yaml:"brokers" env:"KAFKA_BROKERS" env-default:"localhost:9092"`
 	GroupID       string        `yaml:"group_id" env:"KAFKA_GROUP_ID"`
-	MinBytes      int           `yaml:"min_bytes" env:"KAFKA_MIN_BYTES" env-default:"10000"`        // 10KB
-	MaxBytes      int           `yaml:"max_bytes" env:"KAFKA_MAX_BYTES" env-default:"10000000"`     // 10MB
+	MinBytes      int           `yaml:"min_bytes" env:"KAFKA_MIN_BYTES" env-default:"10000"`    // 10KB
+	MaxBytes      int           `yaml:"max_bytes" env:"KAFKA_MAX_BYTES" env-default:"10000000"` // 10MB
 	MaxWait       time.Duration `yaml:"max_wait" env:"KAFKA_MAX_WAIT" env-default:"500ms"`
 	CommitTimeout time.Duration `yaml:"commit_timeout" env:"KAFKA_COMMIT_TIMEOUT" env-default:"5s"`
 	BatchSize     int           `yaml:"batch_size" env:"KAFKA_BATCH_SIZE" env-default:"100"`
@@ -29,7 +79,7 @@ type Event struct {
 	Type      string          `json:"type"`
 	Source    string          `json:"source"`
 	Data      json.RawMessage `json:"data"`
-	Timestamp time.Time       `json:"timestamp"`
+	Timestamp FlexibleTime    `json:"timestamp"`
 	Metadata  Metadata        `json:"metadata,omitempty"`
 }
 
@@ -246,4 +296,3 @@ func (mc *MultiConsumer) Close() error {
 	}
 	return nil
 }
-
