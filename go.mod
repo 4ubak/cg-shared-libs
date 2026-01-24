@@ -3,9 +3,11 @@ module gitlab.com/xakpro/cg-shared-libs
 go 1.24.5
 
 require (
+	connectrpc.com/connect v1.19.1
 	github.com/elastic/go-elasticsearch/v8 v8.19.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/golang-migrate/migrate/v4 v4.18.1
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/segmentio/kafka-go v0.4.49
 	go.uber.org/zap v1.27.1
@@ -16,10 +18,14 @@ require (
 	github.com/elastic/elastic-transport-go/v8 v8.8.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.38.0 // indirect
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
+	go.uber.org/atomic v1.7.0 // indirect
 )
 
 require (

@@ -1,0 +1,121 @@
+package postgres
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"gitlab.com/xakpro/cg-shared-libs/logger"
+	"go.uber.org/zap"
+)
+
+// RunMigrations applies database migrations with automatic dirty state recovery.
+// It supports context cancellation and has a default timeout of 30 seconds.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control
+//   - cfg: PostgreSQL configuration
+//   - migrationsPath: Path to migrations directory (relative or absolute)
+//
+// The function will:
+//   - Automatically fix dirty migration state by forcing version and rolling back
+//   - Apply all pending migrations
+//   - Log detailed information about the migration process
+func RunMigrations(ctx context.Context, cfg Config, migrationsPath string) error {
+	// Create context with timeout if not already set
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Resolve absolute path
+	absPath, err := filepath.Abs(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("resolve migrations path: %w", err)
+	}
+
+	// Create migrator
+	m, err := migrate.New(
+		fmt.Sprintf("file://%s", absPath),
+		cfg.DSN(),
+	)
+	if err != nil {
+		return fmt.Errorf("init migrator: %w", err)
+	}
+	defer func() {
+		sourceErr, dbErr := m.Close()
+		if sourceErr != nil {
+			logger.Warn("failed to close migration source", zap.Error(sourceErr))
+		}
+		if dbErr != nil {
+			logger.Warn("failed to close migration database", zap.Error(dbErr))
+		}
+	}()
+
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("migration cancelled: %w", ctx.Err())
+	default:
+	}
+
+	// Auto-fix dirty state
+	var wasDirty bool
+	var dirtyVersion uint
+	if version, dirty, err := m.Version(); err == nil && dirty {
+		logger.Warn("migration state is dirty, forcing current version",
+			zap.Uint("version", version),
+		)
+		wasDirty = true
+		dirtyVersion = version
+		if err := m.Force(int(version)); err != nil {
+			return fmt.Errorf("force migration version: %w", err)
+		}
+		// Rollback to previous version to reapply migration (safer approach)
+		if version > 0 {
+			logger.Info("rolling back to previous version to reapply migration",
+				zap.Uint("from_version", version),
+				zap.Uint("to_version", version-1),
+			)
+			if err := m.Migrate(uint(version - 1)); err != nil {
+				logger.Warn("failed to rollback, will try to apply anyway", zap.Error(err))
+			}
+		}
+	} else if err != nil && err != migrate.ErrNilVersion {
+		return fmt.Errorf("read migration version: %w", err)
+	}
+
+	// Check for context cancellation again
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("migration cancelled: %w", ctx.Err())
+	default:
+	}
+
+	// Apply migrations
+	if err := m.Up(); err != nil {
+		if err == migrate.ErrNoChange {
+			if wasDirty {
+				logger.Info("PostgreSQL migrations are up to date (dirty state was fixed)",
+					zap.Uint("previous_dirty_version", dirtyVersion),
+				)
+			} else {
+				logger.Info("PostgreSQL migrations are up to date")
+			}
+		} else {
+			return fmt.Errorf("apply migrations: %w", err)
+		}
+	} else {
+		if wasDirty {
+			logger.Info("PostgreSQL migrations applied (dirty state was fixed and migration reapplied)",
+				zap.Uint("previous_dirty_version", dirtyVersion),
+			)
+		} else {
+			logger.Info("PostgreSQL migrations applied")
+		}
+	}
+
+	return nil
+}
