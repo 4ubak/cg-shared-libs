@@ -3,7 +3,6 @@ module gitlab.com/xakpro/cg-shared-libs
 go 1.24.5
 
 require (
-	connectrpc.com/connect v1.19.1
 	github.com/elastic/go-elasticsearch/v8 v8.19.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.0
